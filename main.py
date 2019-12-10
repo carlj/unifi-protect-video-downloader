@@ -10,6 +10,7 @@ import time
 from os import path, makedirs
 import requests
 import urllib3
+import logging
 
 __author__ = "Daniel Fernau"
 __copyright__ = "Copyright 2019, Daniel Fernau"
@@ -67,23 +68,25 @@ parser.add_argument("--snapshot", action='store_true', required=False,
                     dest="create_snapshot",
                     help="Capture and download a snapshot from the specified camera(s)")
 
+logging.getLogger().setLevel(logging.INFO)
+
 args = parser.parse_args()
 
 # check the provided command line arguments
 if not (args.create_snapshot or (args.start and args.end)):
-    print("Please use the --snapshot option, or provide --start and --end timestamps")
+    logging.error("Please use the --snapshot option, or provide --start and --end timestamps")
     exit(6)
 
 if args.create_snapshot:
     if args.start or args.end:
-        print("The arguments --start and --end are ignored when using the --snapshot option")
+        logging.info("The arguments --start and --end are ignored when using the --snapshot option")
     date_time_obj_start = datetime.datetime.now()
     js_timestamp_start = int(date_time_obj_start.timestamp()) * 1000
 
 # normalize path to destination directory and check if it exists
 target_dir = path.abspath(args.destination_path)
 if not path.isdir(target_dir):
-    print("Video file destination directory '" + str(target_dir) + "' is invalid or does not exist!")
+    logging.error("Video file destination directory '" + str(target_dir) + "' is invalid or does not exist!")
     exit(1)
 
 if not args.create_snapshot:
@@ -104,12 +107,11 @@ def get_api_auth_bearer_token(username, password):
     auth_uri = "https://" + str(args.address) + ":" + str(args.port) + "/api/auth"
     response = requests.post(auth_uri, json={"username": username, "password": password}, verify=args.verify_ssl)
     if response.status_code == 200:
-        print("Successfully authenticated as user " + str(username))
+        logging.info(f"Successfully authenticated as user {username}")
         authorization_header = response.headers['Authorization']
         return authorization_header
     else:
-        print("Authentication as user " + str(username) + " failed with status " +
-              str(response.status_code) + " " + str(response.reason))
+        logging.error(f"Authentication as user {username} failed with status {response.status_code} {response.reason}")
         print_download_stats()
         exit(2)
 
@@ -120,12 +122,12 @@ def get_api_access_key(bearer_token):
     response = requests.post(access_key_uri, headers={'Authorization': 'Bearer ' + bearer_token},
                              verify=args.verify_ssl)
     if response.status_code == 200:
-        print("Successfully requested API Access Key")
+        logging.info("Successfully requested API Access Key")
         json_response = response.json()
         access_key = json_response['accessKey']
         return access_key
     else:
-        print("Failed to get access key from API. " + str(response.status_code) + " " + str(response.reason))
+        logging.error(f"Failed to get access key from API. {response.status_code} {response.reason}")
         print_download_stats()
         exit(3)
 
@@ -135,14 +137,14 @@ def get_camera_list(bearer_token):
     bootstrap_uri = "https://" + str(args.address) + ":" + str(args.port) + "/api/bootstrap"
     response = requests.get(bootstrap_uri, headers={'Authorization': 'Bearer ' + bearer_token}, verify=args.verify_ssl)
     if response.status_code == 200:
-        print("Successfully retrieved data from /api/bootstrap")
+        logging.info("Successfully retrieved data from /api/bootstrap")
         json_response = response.json()
         cameras = json_response['cameras']
 
-        print("Cameras found:")
+        logging.info("Cameras found:")
         camera_list = []
         for camera in cameras:
-            print(str(camera['name']) + " (" + str(camera['id']) + ")")
+            logging.info(str(camera['name']) + " (" + str(camera['id']) + ")")
             camera_list.append({"name": str(camera['name']), "id": str(camera['id'])})
 
         return camera_list
@@ -161,20 +163,20 @@ def download_file(uri, file_name):
         if response.status_code == 200:
             with open(file_name, "wb") as file:
                 file.write(response.content)
-                print("Download successful \n")
+                logging.info("Download successful")
                 files_downloaded += 1
         else:
-            print("Download failed with status " + str(response.status_code) + " " + str(response.reason) + "\n")
+            logging.error(f"Download failed with status {response.status_code} {response.reason} \n")
             if not bool(args.ignore_failed_downloads):
-                print("To skip failed downloads and continue with next file, add argument '--ignore-failed-downloads'")
+                logging.error("To skip failed downloads and continue with next file, add argument '--ignore-failed-downloads'")
                 print_download_stats()
                 exit(4)
             else:
-                print("Argument '--ignore-failed-downloads' is present, continue downloading files...")
+                logging.info("Argument '--ignore-failed-downloads' is present, continue downloading files...")
                 files_skipped += 1
 
     except requests.exceptions.RequestException as request_exception:
-        print("Download failed: " + str(request_exception) + "\n")
+        logging.error(f"Download failed: {request_exception} \n")
         print_download_stats()
         exit(5)
 
@@ -182,9 +184,7 @@ def download_file(uri, file_name):
 def print_download_stats():
     global files_downloaded, files_skipped
     files_total = files_downloaded + files_skipped
-    print(str(files_downloaded) + " files downloaded, " +
-          str(files_skipped) + " files skipped, " +
-          str(files_total) + " files total")
+    logging.info(f"{files_downloaded} files downloaded, {files_skipped} files skipped, {files_total} files total")
 
 
 # return time difference between given date_time_object and next full hour
@@ -253,14 +253,13 @@ def download_footage(camera_id, camera_name):
         [c for c in camera_name if c.isalpha() or c.isdigit() or c == ' ']
     ).rstrip().replace(" ", "_") + "_" + str(camera_id)[-4:]
 
-    print("Downloading footage for camera '" + str(camera_name) + "' (" + str(camera_id) + ")")
+    logging.info(f"Downloading footage for camera '{camera_name}' ( {camera_id} )")
 
     # split requested time frame into chunks of 1 hour or less and download them one by one
     for date_time_interval_start, date_time_interval_end in calculate_intervals(date_time_obj_start, date_time_obj_end):
         # wait n seconds before starting next download (if parameter is set)
         if int(args.download_wait) != 0 and not first_download:
-            print("Command line argument '--wait-between-downloads' is set to " + str(args.download_wait) +
-                  " second(s)... \n")
+            logging.info(f"Command line argument '--wait-between-downloads' is set to {args.download_wait} second(s)... \n")
             time.sleep(int(args.download_wait))
 
         # start and end time of the video segment to be downloaded
@@ -280,7 +279,7 @@ def download_footage(camera_id, camera_name):
             download_dir = target_with_date_and_name
             if not path.isdir(target_with_date_and_name):
                 makedirs(target_with_date_and_name, exist_ok=True)
-                print("Created path " + str(target_with_date_and_name))
+                logging.info(f"Created path {target_with_date_and_name}")
                 download_dir = target_with_date_and_name
 
         # file name for download
@@ -289,18 +288,17 @@ def download_footage(camera_id, camera_name):
         filename_timestamp = filename_timestamp_start + "_" + filename_timestamp_end
         filename = str(download_dir) + "/" + str(camera_name_fs_safe) + "_" + filename_timestamp + ".mp4"
 
-        print("Downloading video for time range " +
-              str(date_time_interval_start) + " - " + str(date_time_interval_end) + " to " + filename)
+        logging.info(f"Downloading video for time range {date_time_interval_start} {date_time_interval_end}) to {filename}")
 
         # skip downloading files that already exist on disk if argument --skip-existing-files is present
         if bool(args.skip_existing_files) and path.exists(filename):
-            print("File already exists on disk and argument '--skip-existing-files' is present - skipping download \n")
+            logging.info("File already exists on disk and argument '--skip-existing-files' is present - skipping download \n")
             files_skipped += 1
             continue
 
         # create file without content if argument --touch-files is present
         if bool(args.touch_files) and not path.exists(filename):
-            print("Argument '--touch-files' is present. Creating file at " + str(filename))
+            logging.info(f"Argument '--touch-files' is present. Creating file at {filename}")
             open(filename, 'a').close()
 
         # build video export API address
@@ -314,8 +312,7 @@ def download_footage(camera_id, camera_name):
 
         # use the same API Authentication Token (login session) for set number of downloads only (default: 10)
         if downloads_with_current_api_auth == int(args.max_downloads_with_auth):
-            print("API Authentication Token has been used for " + str(downloads_with_current_api_auth) +
-                  " download(s) - requesting new session token...")
+            logging.info(f"API Authentication Token has been used for {downloads_with_current_api_auth} download(s) - requesting new session token...")
 
             # get new API auth bearer token and access key
             api_auth_bearer_token = get_api_auth_bearer_token(str(args.username), str(args.password))
@@ -323,21 +320,18 @@ def download_footage(camera_id, camera_name):
             downloads_with_current_api_auth = 1
             downloads_with_current_api_key = 1
         else:
-            print("API Authentication Token has been used for " + str(downloads_with_current_api_auth) +
-                  " download(s). Maximum is set to " + str(args.max_downloads_with_auth) + ".")
+            logging.info(f"API Authentication Token has been used for {downloads_with_current_api_auth}) download(s). Maximum is set to {args.max_downloads_with_auth}).")
             downloads_with_current_api_auth += 1
 
         # use the same API Access Key for set number of downloads only (default: 3)
         if downloads_with_current_api_key == int(args.max_downloads_with_key):
-            print("API Access Key has been used for " + str(downloads_with_current_api_key) +
-                  " download(s) - requesting new access key...")
+            logging.info(f"API Access Key has been used for {downloads_with_current_api_key} download(s) - requesting new access key...")
 
             # request new access key
             api_access_key = get_api_access_key(api_auth_bearer_token)
             downloads_with_current_api_key = 1
         else:
-            print("API Access Key has been used for " + str(downloads_with_current_api_key) +
-                  " download(s). Maximum is set to " + str(args.max_downloads_with_key) + ".")
+            logging.info(f"API Access Key has been used for {downloads_with_current_api_key} download(s). Maximum is set to {args.max_downloads_with_key}.")
             downloads_with_current_api_key += 1
 
 
@@ -352,7 +346,7 @@ def download_snapshot(camera_id, camera_name):
         [c for c in camera_name if c.isalpha() or c.isdigit() or c == ' ']
     ).rstrip().replace(" ", "_") + "_" + str(camera_id)[-4:]
 
-    print("Downloading snapshot for camera '" + str(camera_name) + "' (" + str(camera_id) + ")")
+    logging.info("Downloading snapshot for camera '{camera_name}' ({camera_id})")
 
     # file path for download
     download_dir = target_dir
@@ -367,19 +361,19 @@ def download_snapshot(camera_id, camera_name):
         download_dir = target_with_date_and_name
         if not path.isdir(target_with_date_and_name):
             makedirs(target_with_date_and_name, exist_ok=True)
-            print("Created path " + str(target_with_date_and_name))
+            logging.info(f"Created path {target_with_date_and_name}")
             download_dir = target_with_date_and_name
 
     # file name for download
     filename_timestamp = date_time_obj_start.strftime("%Y-%m-%d--%H-%M-%S%z")
     filename = str(download_dir) + "/" + str(camera_name_fs_safe) + "_" + filename_timestamp + ".jpg"
 
-    print("Downloading snapshot for time " +
+    logging.info("Downloading snapshot for time " +
           str(date_time_obj_start) + " to " + filename)
 
     # create file without content if argument --touch-files is present
     if bool(args.touch_files) and not path.exists(filename):
-        print("Argument '--touch-files' is present. Creating file at " + str(filename))
+        logging.info(f"Argument '--touch-files' is present. Creating file at {filename}")
         open(filename, 'a').close()
 
     # build snapshot export API address
@@ -392,8 +386,7 @@ def download_snapshot(camera_id, camera_name):
 
     # use the same API Authentication Token (login session) for set number of downloads only (default: 10)
     if downloads_with_current_api_auth == int(args.max_downloads_with_auth):
-        print("API Authentication Token has been used for " + str(downloads_with_current_api_auth) +
-              " download(s) - requesting new session token...")
+        logging.info(f"API Authentication Token has been used for {downloads_with_current_api_auth}) download(s) - requesting new session token...")
 
         # get new API auth bearer token and access key
         api_auth_bearer_token = get_api_auth_bearer_token(str(args.username), str(args.password))
@@ -401,21 +394,18 @@ def download_snapshot(camera_id, camera_name):
         downloads_with_current_api_auth = 1
         downloads_with_current_api_key = 1
     else:
-        print("API Authentication Token has been used for " + str(downloads_with_current_api_auth) +
-              " download(s). Maximum is set to " + str(args.max_downloads_with_auth) + ".")
+        logging.info(f"API Authentication Token has been used for {downloads_with_current_api_auth} download(s). Maximum is set to {args.max_downloads_with_auth}.")
         downloads_with_current_api_auth += 1
 
     # use the same API Access Key for set number of downloads only (default: 3)
     if downloads_with_current_api_key == int(args.max_downloads_with_key):
-        print("API Access Key has been used for " + str(downloads_with_current_api_key) +
-              " download(s) - requesting new access key...")
+        logging.info(f"API Access Key has been used for {downloads_with_current_api_key} download(s) - requesting new access key...")
 
         # request new access key
         api_access_key = get_api_access_key(api_auth_bearer_token)
         downloads_with_current_api_key = 1
     else:
-        print("API Access Key has been used for " + str(downloads_with_current_api_key) +
-              " download(s). Maximum is set to " + str(args.max_downloads_with_key) + ".")
+        logging.info(f"API Access Key has been used for {downloads_with_current_api_key} download(s). Maximum is set to {args.max_downloads_with_key}.")
         downloads_with_current_api_key += 1
 
 
@@ -436,8 +426,7 @@ api_camera_list = get_camera_list(api_auth_bearer_token)
 
 if not args.create_snapshot:
     # noinspection PyUnboundLocalVariable
-    print("Downloading video files between " + str(date_time_obj_start) + " and " + str(date_time_obj_end) +
-          " from 'https://" + str(args.address) + ":" + str(args.port) + "/api/video/export' \n")
+    logging.info(f"Downloading video files between {date_time_obj_start} and {date_time_obj_end} from 'https://{args.address}:{args.port}/api/video/export' \n")
 
     if args.camera_ids == 'all':
         for api_camera in api_camera_list:
@@ -449,8 +438,7 @@ if not args.create_snapshot:
                 if args_camera_id == api_camera['id']:
                     download_footage(api_camera['id'], api_camera['name'])
 else:
-    print("Downloading snapshot file(s) for " + str(date_time_obj_start) +
-          " from 'https://" + str(args.address) + ":" + str(args.port) + "/api/cameras/{camera_id}/snapshot' \n")
+    logging.info(f"Downloading snapshot file(s) for {date_time_obj_start} from 'https://{args.address}:{args.port}/api/cameras/{camera_id}/snapshot' \n")
 
     if args.camera_ids == 'all':
         for api_camera in api_camera_list:
